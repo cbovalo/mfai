@@ -19,6 +19,8 @@ from torch.utils.checkpoint import checkpoint
 from dataclasses_json import dataclass_json
 from dataclasses import dataclass
 
+from mfai.torch.models.base import ModelType
+
 from mfai.torch.models.graphcast.graph import Graph
 from mfai.torch.models.graphcast.gnn_models import (
     GridNodeModel,
@@ -34,6 +36,7 @@ from mfai.torch.models.graphcast.embeddings import (
 from typing import Tuple
 from mfai.torch.models.base import ModelABC
 from pathlib import Path
+
 from py4cast.datasets.base import Statics
 
 
@@ -70,18 +73,18 @@ class GraphCastSettings:
 
 class GraphCast(ModelABC, nn.Module):
 
-    setting_kls = GraphCastSettings
     onnx_supported = False
+    setting_kls = GraphCastSettings
+    model_type: ModelType.GRAPH
     input_dims: str = ("batch", "ngrid", "features")
     output_dims: int = ("batch", "ngrid", "features")
+    features_last: bool = True
+    register: bool = True
 
     def __init__(
         self,
-        num_input_features: int,
-        num_output_features: int,
         settings: GraphCastSettings = GraphCastSettings(),
-        statics: Statics,
-        input_shape: tuple,
+        statics: Statics = Statics(),
     ) -> None:
         super().__init__()
 
@@ -135,7 +138,7 @@ class GraphCast(ModelABC, nn.Module):
         dims = (batch_size,) + (-1,) * data.dim()
         return data.unsqueeze(0).expand(*dims)
 
-    def forward(self, x: Tensor) -> Tensor:        
+    def forward(self, x: Tensor) -> Tensor:
         grid_node_feat = x
 
         # Encoder
@@ -157,14 +160,14 @@ class GraphCast(ModelABC, nn.Module):
             device=grid_node_feat.device,
         )
         mesh_node_feat = torch.cat([dummy_mesh_node_feat, mesh_node_feat], dim=-1)
-        
+
         grid_node_feat, mesh_node_feat, _ = self.encoder(
             grid_node_feat,
             mesh_node_feat,
             self.grid2mesh_edge_index,
             self.grid2mesh_edge_attr,
         )
-        
+
         # Processor
         ############################
         mesh_node_feat, _ = self.processor(
@@ -172,7 +175,7 @@ class GraphCast(ModelABC, nn.Module):
             self.mesh_edge_index,
             self.mesh_edge_attr,
         )
-        
+
         # Decoder
         ############################
         grid_node_feat = self.decoder(
@@ -181,7 +184,7 @@ class GraphCast(ModelABC, nn.Module):
             self.mesh2grid_edge_index,
             self.mesh2grid_edge_attr,
         )
-        
+
         # Final layer
         ############################
         output = self.final_layer(grid_node_feat)
