@@ -15,7 +15,6 @@
 import torch
 from torch import Tensor
 import torch.nn as nn
-from torch.utils.checkpoint import checkpoint
 from dataclasses_json import dataclass_json
 from dataclasses import dataclass
 
@@ -55,13 +54,13 @@ class GraphCastSettings:
     mesh2grid_edge_normalization_factor: float = None
 
     # Architecture configuration
-    input_grid_node_channel: 186
-    input_mesh_node_channel: 3
-    input_mesh_edge_channel: 4
-    input_grid2mesh_edge_channel: 4
-    input_mesh2grid_edge_channel: 4
-    output_grid_node_channel: 83
-    output_channel: 512
+    input_grid_node_channel: int = 186
+    input_mesh_node_channel: int = 3
+    input_mesh_edge_channel: int = 4
+    input_grid2mesh_edge_channel: int = 4
+    input_mesh2grid_edge_channel: int = 4
+    output_grid_node_channel: int = 83
+    output_channel: int = 512
     hidden_channel: int = 128
     num_layers: int = 1
     use_norm: bool = True
