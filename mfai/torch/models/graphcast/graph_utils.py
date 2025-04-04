@@ -63,7 +63,7 @@ def get_g2m_connectivity(
     spherical_coordinates = grid_lat_lon_to_spherical(grid_lat, grid_lon)
 
     neighbors = mesh.kdtree.query_ball_point(
-        x=spherical_coordinates, r=radius_query, n_workers=n_workers
+        x=spherical_coordinates, r=radius_query, workers=n_workers
     )
 
     grid_edge_index = []
@@ -73,14 +73,14 @@ def get_g2m_connectivity(
         grid_edge_index.append(np.repeat(grid_index, len(mesh_neighbors)))
         mesh_edge_index.append(mesh_neighbors)
 
-    grid_edge_index = np.concatenate(grid_edge_index)
-    mesh_edge_index = np.concatenate(mesh_edge_index)
+    grid_edge_index = np.concatenate(grid_edge_index).astype(int)
+    mesh_edge_index = np.concatenate(mesh_edge_index).astype(int)
 
     return grid_edge_index, mesh_edge_index  # senders, receivers
 
 
-def get_m2g_connectivity(mesh: trimesh.Trimesh, grid: Tensor) -> tuple:
-    spherical_coordinates = grid_lat_lon_to_spherical(grid)
+def get_m2g_connectivity(mesh: trimesh.Trimesh, lat: np.ndarray, lon: np.ndarray) -> tuple:
+    spherical_coordinates = grid_lat_lon_to_spherical(lat, lon)
     _, _, containing_face = trimesh.proximity.closest_point(mesh, spherical_coordinates)
 
     mesh_edge_index = mesh.faces[containing_face].reshape(-1).astype(int)
@@ -563,7 +563,6 @@ def multimesh_project_into_dst_local_coordinates(
             dst_pos_in_rotated_space[:, 2],
             np.zeros_like(dst_pos_in_rotated_space[:, 2]),
         )
-        print("All good")
     except ValueError:
         raise ValueError("Error in the projection to local coordinate system.")
 

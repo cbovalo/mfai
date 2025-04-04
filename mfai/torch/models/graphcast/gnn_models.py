@@ -21,6 +21,17 @@ from torch_geometric.utils import scatter
 from typing import Tuple
 
 
+class CheckpointWrapper(nn.Module):
+    """Wrapper for checkpointing a module. Comes from AIFS"""
+
+    def __init__(self, module: nn.Module) -> None:
+        super().__init__()
+        self.module = module
+
+    def forward(self, *args, **kwargs):
+        return torch.utils.checkpoint.checkpoint(self.module, *args, **kwargs, use_reentrant=False)
+
+
 class MLP(nn.Module):
     """
     MultiLayer Perceptron.
@@ -72,7 +83,7 @@ class MLP(nn.Module):
         )
         layers.append(self.activation())
 
-        for _ in range(self.hidden_layers - 1):
+        for _ in range(self.num_layers - 1):
             layers.append(
                 nn.Linear(
                     self.hidden_channel,
@@ -94,6 +105,7 @@ class MLP(nn.Module):
             layers.append(self.norm(self.out_channel))
 
         self.gnn_mlp = nn.Sequential(*layers)
+        # self.gnn_mlp = CheckpointWrapper(self.gnn_mlp)
 
         self.init_weights()
 

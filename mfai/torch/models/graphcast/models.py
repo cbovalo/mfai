@@ -18,7 +18,7 @@ import torch.nn as nn
 from dataclasses_json import dataclass_json
 from dataclasses import dataclass
 
-from mfai.torch.models.base import ModelType
+from mfai.torch.models.base import ModelABC, ModelType
 
 from mfai.torch.models.graphcast.graph import Graph
 from mfai.torch.models.graphcast.gnn_models import (
@@ -36,11 +36,11 @@ from typing import Tuple
 from mfai.torch.models.base import ModelABC
 from pathlib import Path
 
-from py4cast.datasets.base import Statics
+# from py4cast.datasets.base import Statics
 
 
 @dataclass_json
-@dataclass(slots=True)
+@dataclass
 class GraphCastSettings:
     """
     Settings for the GraphCast model.
@@ -50,17 +50,18 @@ class GraphCastSettings:
 
     # Graph configuration
     n_subdivisions: int = 6
+    coarser_mesh: int = 2
     fraction: float = 0.6
     mesh2grid_edge_normalization_factor: float = None
 
     # Architecture configuration
-    input_grid_node_channel: int = 186
+    # input_grid_node_channel: int = 186
     input_mesh_node_channel: int = 3
     input_mesh_edge_channel: int = 4
     input_grid2mesh_edge_channel: int = 4
     input_mesh2grid_edge_channel: int = 4
-    output_grid_node_channel: int = 83
-    output_channel: int = 512
+    # output_grid_node_channel: int = 83
+    output_channel: int = 128
     hidden_channel: int = 128
     num_layers: int = 1
     use_norm: bool = True
@@ -73,8 +74,10 @@ class GraphCastSettings:
 class GraphCast(ModelABC, nn.Module):
 
     onnx_supported = False
-    setting_kls = GraphCastSettings
-    model_type: ModelType.GRAPH
+    settings_kls = GraphCastSettings
+    model_type = ModelType.GRAPH
+    supported_num_spatial_dims = (1,)
+    num_spatial_dims: int = 1
     input_dims: str = ("batch", "ngrid", "features")
     output_dims: int = ("batch", "ngrid", "features")
     features_last: bool = True
@@ -82,18 +85,24 @@ class GraphCast(ModelABC, nn.Module):
 
     def __init__(
         self,
-        settings: GraphCastSettings = GraphCastSettings(),
-        statics: Statics = Statics(),
+        in_channels: int,
+        out_channels: int,
+        input_shape: Tuple[int, ...],
+        settings: GraphCastSettings = None,
+        statics: "Statics" = None,
     ) -> None:
         super().__init__()
 
+        settings.in_channels = in_channels
         self._settings = settings
+        self.out_channels = out_channels
 
         # Let's create the graphs
         graph = Graph(
-            grid_latitude=statics.grid_latitude,
-            grid_longitude=statics.grid_longitude,
+            grid_latitude=statics.meshgrid[1][:, 0],
+            grid_longitude=statics.meshgrid[0][0],
             n_subdivisions=settings.n_subdivisions,
+            coarser_mesh=settings.coarser_mesh,
             graph_dir=settings.tmp_dir,
         )
         graph.create_Grid2Mesh(fraction=settings.fraction, n_workers=4)
@@ -114,7 +123,7 @@ class GraphCast(ModelABC, nn.Module):
         for k, v in self.mesh2grid_graph.items():
             self.register_buffer(f"mesh2grid_{k}", v, persistent=False)
 
-        self.num_grid_nodes = statics.grid_latitude * statics.grid_longitude
+        self.num_grid_nodes = len(statics.meshgrid[1][:, 0]) * len(statics.meshgrid[0][0])
 
         # Instantiate the model components
         self.encoder = GraphCastEncoder(settings)
@@ -122,30 +131,40 @@ class GraphCast(ModelABC, nn.Module):
         self.decoder = GraphCastDecoder(settings)
         self.final_layer = MLP(
             in_channel=settings.output_channel,
-            out_channel=settings.output_grid_node_channel,
+            out_channel=self.out_channels,
             hidden_channel=settings.hidden_channel,
             num_layers=settings.num_layers,
             use_bias=True,
             use_norm=False,
         )
 
+    @property
+    def settings(self) -> GraphCastSettings:
+        return self._settings
+
     @staticmethod
-    def expand_to_batch(self, data: Tensor, batch_size: int) -> Tensor:
+    def expand_to_batch(data: Tensor, batch_size: int) -> Tensor:
         """
         Expand the input data to a batch dimension.
         """
         dims = (batch_size,) + (-1,) * data.dim()
         return data.unsqueeze(0).expand(*dims)
 
+    def checkpointing_fn(self, function, *args):
+        if self.settings.use_checkpoint:
+            return torch.utils.checkpoint.checkpoint(function, *args, use_reentrant=False)
+        else:   
+            return function(*args)
+
     def forward(self, x: Tensor) -> Tensor:
-        grid_node_feat = x
+        grid_node_feat = x.squeeze(dim=0)
 
         # Encoder
         ############################
         mesh_node_feat = self.mesh_x
-        static_node_feat = self.expand_to_batch(self.grid2mesh_x_s, x.size(0))
+        static_node_feat = self.grid2mesh_x_s
 
-        assert grid_node_feat.shape[1] == static_node_feat.shape[1]
+        assert grid_node_feat.shape[0] == static_node_feat.shape[0]
         grid_node_feat = torch.cat([grid_node_feat, static_node_feat], dim=-1)
 
         """
@@ -154,13 +173,20 @@ class GraphCast(ModelABC, nn.Module):
         # https://github.com/google-deepmind/graphcast/blob/8debd7289bb2c498485f79dbd98d8b4933bfc6a7/graphcast/graphcast.py#L629
         """
         dummy_mesh_node_feat = torch.zeros(
-            (mesh_node_feat.shape[1],) + (grid_node_feat.shape[1],),
+            (mesh_node_feat.shape[0],) + (grid_node_feat.shape[-1],),
             dtype=mesh_node_feat.dtype,
             device=grid_node_feat.device,
         )
         mesh_node_feat = torch.cat([dummy_mesh_node_feat, mesh_node_feat], dim=-1)
 
-        grid_node_feat, mesh_node_feat, _ = self.encoder(
+        # grid_node_feat, mesh_node_feat, _ = self.encoder(
+        #     grid_node_feat,
+        #     mesh_node_feat,
+        #     self.grid2mesh_edge_index,
+        #     self.grid2mesh_edge_attr,
+        # )
+        grid_node_feat, mesh_node_feat, _ = self.checkpointing_fn(
+            self.encoder,
             grid_node_feat,
             mesh_node_feat,
             self.grid2mesh_edge_index,
@@ -169,7 +195,13 @@ class GraphCast(ModelABC, nn.Module):
 
         # Processor
         ############################
-        mesh_node_feat, _ = self.processor(
+        # mesh_node_feat, _ = self.processor(
+        #     mesh_node_feat,
+        #     self.mesh_edge_index,
+        #     self.mesh_edge_attr,
+        # )
+        mesh_node_feat, _ = self.checkpointing_fn(
+            self.processor,
             mesh_node_feat,
             self.mesh_edge_index,
             self.mesh_edge_attr,
@@ -177,7 +209,14 @@ class GraphCast(ModelABC, nn.Module):
 
         # Decoder
         ############################
-        grid_node_feat = self.decoder(
+        # grid_node_feat = self.decoder(
+        #     grid_node_feat,
+        #     mesh_node_feat,
+        #     self.mesh2grid_edge_index,
+        #     self.mesh2grid_edge_attr,
+        # )
+        grid_node_feat = self.checkpointing_fn(
+            self.decoder,
             grid_node_feat,
             mesh_node_feat,
             self.mesh2grid_edge_index,
@@ -186,9 +225,13 @@ class GraphCast(ModelABC, nn.Module):
 
         # Final layer
         ############################
-        output = self.final_layer(grid_node_feat)
+        # output = self.final_layer(grid_node_feat)
+        output = self.checkpointing_fn(
+            self.final_layer,
+            grid_node_feat,
+        )
 
-        return output
+        return output.unsqueeze(dim=0)
 
 
 class GraphCastEncoder(nn.Module):
@@ -255,7 +298,7 @@ class GraphCastProcessor(nn.Module):
         edge_index: Tensor,
         mesh_efeat: Tensor,
     ) -> Tuple[Tensor, Tensor]:
-        mesh_efeat = self.processor_embedder(mesh_efeat)
+        mesh_efeat = self.processor_embedding(mesh_efeat)
 
         for layer in self.processor:
             mesh_nfeat, mesh_efeat = layer(

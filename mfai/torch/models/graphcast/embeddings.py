@@ -2,8 +2,9 @@ from torch import Tensor
 import torch.nn as nn
 
 # from mfai.torch.models.nlam.interaction_net import make_mlp
-from gnn_models import MLP
-from models import GraphCastSettings
+from mfai.torch.models.graphcast.gnn_models import MLP
+
+# from mfai.torch.models.graphcast.models import GraphCastSettings
 
 from typing import Tuple
 
@@ -62,20 +63,20 @@ class GraphCastEncoderEmbedding(nn.Module):
 
     def __init__(
         self,
-        encoder_config: GraphCastSettings = GraphCastSettings(),
+        encoder_config: "GraphCastSettings" = None,
     ):
         super().__init__()
 
         self.encoder_config = encoder_config
 
         self.grid_node_embedding = Embedding(
-            in_channel=self.encoder_config.input_grid_node_channel,
+            in_channel=self.encoder_config.in_channels,
             out_channel=self.encoder_config.output_channel,
             hidden_channel=self.encoder_config.hidden_channel,
             num_layers=self.encoder_config.num_layers,
         )
         self.mesh_node_embedding = Embedding(
-            in_channel=self.encoder_config.input_mesh_node_channel,
+            in_channel=self.encoder_config.in_channels+self.encoder_config.input_mesh_node_channel,
             out_channel=self.encoder_config.output_channel,
             hidden_channel=self.encoder_config.hidden_channel,
             num_layers=self.encoder_config.num_layers,
@@ -122,7 +123,7 @@ class GraphCastProcessorEmbedding(nn.Module):
 
     def __init__(
         self,
-        processor_config: GraphCastSettings = GraphCastSettings(),
+        processor_config: "GraphCastSettings" = None,
     ):
         super().__init__()
 
@@ -155,7 +156,7 @@ class GraphCastDecoderEmbedding(nn.Module):
 
     def __init__(
         self,
-        decoder_config: GraphCastSettings = GraphCastSettings(),
+        decoder_config: "GraphCastSettings" = None,
     ):
         super().__init__()
 

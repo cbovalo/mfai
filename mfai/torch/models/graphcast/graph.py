@@ -45,15 +45,15 @@ class Graph:
         self.grid_node_longitude, self.grid_node_latitude = np.meshgrid(
             self.grid_longitude, self.grid_latitude
         )
-        self.grid_node_latitude = self.grid_node_latitude.reshape([-1])
-        self.grid_node_longitude = self.grid_node_longitude.reshape([-1])
+        self.grid_node_latitude = self.grid_node_latitude.reshape([-1]).astype(np.float32)
+        self.grid_node_longitude = self.grid_node_longitude.reshape([-1]).astype(np.float32)
 
         self.meshes = self._create_square_mesh()
 
         mesh_phi, mesh_theta = cartesian_to_spherical(
-            self.finest_mesh.vertices[:, 0],
-            self.finest_mesh.vertices[:, 1],
-            self.finest_mesh.vertices[:, 2],
+            self.finest_mesh.vertices[:, 0].astype(np.float32),
+            self.finest_mesh.vertices[:, 1].astype(np.float32),
+            self.finest_mesh.vertices[:, 2].astype(np.float32),
         )
 
         self.mesh_node_longitude, self.mesh_node_latitude = spherical_to_lat_lon(
@@ -160,7 +160,7 @@ class Graph:
             edge_index=torch.stack(
                 [torch.from_numpy(src), torch.from_numpy(dst)], dim=0
             ),
-            edge_attr=torch.from_numpy(edge_features),
+            edge_attr=torch.from_numpy(edge_features).to(torch.float32),
         )
 
         # Save the grid2mesh graph to disk
@@ -204,12 +204,12 @@ class Graph:
             x=torch.from_numpy(node_features),
             edge_index=torch.stack(
                 [
-                    torch.from_numpy(np.copy(self.finest_mesh.edges[:, 0])),
-                    torch.from_numpy(np.copy(self.finest_mesh.edges[:, 1])),
+                    torch.from_numpy(np.copy(undirected_edges[0])),
+                    torch.from_numpy(np.copy(undirected_edges[1])),
                 ],
                 dim=0,
             ),
-            edge_attr=torch.from_numpy(edge_features),
+            edge_attr=torch.from_numpy(edge_features).to(torch.float32),
             y=None,
         )
 
@@ -225,7 +225,7 @@ class Graph:
 
     def create_Mesh2Grid(self, edge_normalization_factor: float = None) -> None:
         # Get the graph connectivity for Mesh2Grid
-        src, dst = get_m2g_connectivity(self.meshes[-1], self.meshgrid)
+        src, dst = get_m2g_connectivity(self.meshes[-1], self.grid_latitude, self.grid_longitude)
 
         # Get the node and edge features for the mesh2grid graph
         _, _, edge_features = create_node_edge_features(
@@ -247,7 +247,7 @@ class Graph:
             edge_index=torch.stack(
                 [torch.from_numpy(src), torch.from_numpy(dst)], dim=0
             ),
-            edge_attr=torch.from_numpy(edge_features),
+            edge_attr=torch.from_numpy(edge_features).to(torch.float32),
         )
 
         # Save the mesh2grid graph to disk
