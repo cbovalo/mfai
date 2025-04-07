@@ -89,7 +89,8 @@ class GraphCast(ModelABC, nn.Module):
         out_channels: int,
         input_shape: Tuple[int, ...],
         settings: GraphCastSettings = None,
-        statics: "Statics" = None,
+        lat: float = None,
+        lon: float = None,
     ) -> None:
         super().__init__()
 
@@ -98,9 +99,13 @@ class GraphCast(ModelABC, nn.Module):
         self.out_channels = out_channels
 
         # Let's create the graphs
+        print("Creating the graph...")
+        print(
+            f"Limits of the domain: {lat.min()}, {lat.max()}, {lon.min()}, {lon.max()}"
+        )
         graph = Graph(
-            grid_latitude=statics.meshgrid[1][:, 0],
-            grid_longitude=statics.meshgrid[0][0],
+            grid_latitude=lat,
+            grid_longitude=lon,
             n_subdivisions=settings.n_subdivisions,
             coarser_mesh=settings.coarser_mesh,
             graph_dir=settings.tmp_dir,
@@ -123,7 +128,7 @@ class GraphCast(ModelABC, nn.Module):
         for k, v in self.mesh2grid_graph.items():
             self.register_buffer(f"mesh2grid_{k}", v, persistent=False)
 
-        self.num_grid_nodes = len(statics.meshgrid[1][:, 0]) * len(statics.meshgrid[0][0])
+        self.num_grid_nodes = lat.shape[0] * lat.shape[1]
 
         # Instantiate the model components
         self.encoder = GraphCastEncoder(settings)
@@ -152,8 +157,10 @@ class GraphCast(ModelABC, nn.Module):
 
     def checkpointing_fn(self, function, *args):
         if self.settings.use_checkpoint:
-            return torch.utils.checkpoint.checkpoint(function, *args, use_reentrant=False)
-        else:   
+            return torch.utils.checkpoint.checkpoint(
+                function, *args, use_reentrant=False
+            )
+        else:
             return function(*args)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -165,7 +172,7 @@ class GraphCast(ModelABC, nn.Module):
         static_node_feat = self.grid2mesh_x_s
 
         assert grid_node_feat.shape[0] == static_node_feat.shape[0]
-        grid_node_feat = torch.cat([grid_node_feat, static_node_feat], dim=-1)
+        # grid_node_feat = torch.cat([grid_node_feat, static_node_feat], dim=-1)
 
         """
         # We do as in GraphCast code, we add some zeros to the mesh node features to
